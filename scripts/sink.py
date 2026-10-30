@@ -86,8 +86,17 @@ class Receiver(BaseHTTPRequestHandler):
         self._reply()
 
 
+class ArgParser(argparse.ArgumentParser):
+    """参数用错时 argparse 默认 exit(2)——那个码在本脚本里另有所指，会骗到读退出码的人；
+    这里统一退成 9（用法错误），用法行照样给到 stderr，也不往 stdout 吐东西"""
+
+    def error(self, message):
+        sys.stderr.write("用法错误：" + message + "（看脚本开头的用法说明）\n")
+        raise SystemExit(9)
+
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(add_help=False)
+    parser = ArgParser(add_help=False)
     parser.add_argument("--out", default=DEFAULT_OUT)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--timeout", type=int, default=150)

@@ -21,7 +21,7 @@
 缓存 `nexus_cache.json`：`ids`（见过的 ID）、`mods`（{id: {title, link, updated}}）、`last_check`、
 `last_error`、`last_error_time`。判更新只认**严格晚于**缓存里那个绝对时间——所以缓存存原始绝对串。
 """
-import sys, os, re, json, argparse, tempfile
+import sys, os, re, json, time, argparse, tempfile
 from datetime import datetime, timezone, timedelta
 
 BASE = "https://www.nexusmods.com/stalker2heartofchornobyl/mods"
@@ -192,11 +192,18 @@ def apply_update(cache, rows, notes):
 def run(text, hours=24, update=False, quiet=True):
     """比对并落盘。返回 (退出码, 要报的条数)。每次都在 status 里留一行纯计数"""
     code, count, stats = compare(text, hours, update, quiet)
+    if code in (EXIT_NO_CHANGE, EXIT_CHANGED):
+        # 这轮成功了：把上一轮遗留的 error 清掉，免得几天前那条被当成这次的失败
+        try:
+            if os.path.exists(ERROR):
+                os.remove(ERROR)
+        except Exception:
+            pass
     try:
         os.makedirs(DATA, exist_ok=True)
         with open(STATUS, "w", encoding="utf-8") as handle:
             handle.write(f"{datetime.now(LOCAL_TZ).strftime('%m-%d %H:%M')} [{NAME}] 退出码{code}"
-                         f" 抓到{stats['got']} 缓存已含{stats['already']} 窗口外{stats['outside']}"
+                         f" 抓到{stats['got']} 没变化{stats['already']} 窗口外{stats['outside']}"
                          f" 新增{stats['new']} 更新{stats['updated']} 窗口{hours}小时"
                          f"{' 时间告警' + str(stats['unknown_time']) + '条' if stats['unknown_time'] else ''}"
                          + (f" {stats['note']}" if stats.get("note") else "") + "\n")
@@ -235,15 +242,33 @@ def compare(text, hours, update, quiet):
         save_cache(cache)
 
     if not quiet:
-        print("\n".join(lines) if rows else f"[{NAME}] 无新增/更新（抓到 {len(items)} 条，缓存已含 {stats['already']} 条，窗口 {hours} 小时）")
+        print("\n".join(lines) if rows else f"[{NAME}] 无新增/更新（抓到 {len(items)} 条，{stats['already']} 条与缓存一致、{stats['outside']} 条在窗口外，窗口 {hours} 小时）")
     return ((EXIT_CHANGED, len(rows), stats) if rows else (EXIT_NO_CHANGE, 0, stats))
 
 
+def grab_age_minutes(path):
+    """抓取文件放了多少分钟。旧文件冒充新结果最阴——会一路报「无新增/更新」，其实根本没重新抓"""
+    try:
+        return (time.time() - os.path.getmtime(path)) / 60.0
+    except Exception:
+        return None
+
+
+class ArgParser(argparse.ArgumentParser):
+    """参数用错时 argparse 默认 exit(2)——那个码在本脚本里另有所指，会骗到读退出码的人；
+    这里统一退成 9（用法错误），用法行照样给到 stderr，也不往 stdout 吐东西"""
+
+    def error(self, message):
+        sys.stderr.write("用法错误：" + message + "（看脚本开头的用法说明）\n")
+        raise SystemExit(9)
+
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(add_help=False)
+    parser = ArgParser(add_help=False)
     parser.add_argument("--from-file", dest="from_file")
     parser.add_argument("--hours", type=int, default=24)
     parser.add_argument("--update", action="store_true")
+    parser.add_argument("--max-age", dest="max_age", type=int, default=60)
     parser.add_argument("--print", dest="echo", action="store_true")
     parser.add_argument("--selftest", action="store_true")
     args = parser.parse_args(argv)
@@ -257,6 +282,10 @@ def main(argv=None):
                 text = handle.read()
         except Exception as read_error:
             return write_error(f"读不到抓取文件 {args.from_file}：{read_error}", not args.echo, EXIT_FAILED)
+        age = grab_age_minutes(args.from_file)
+        if args.max_age > 0 and age is not None and age > args.max_age:
+            return write_error(f"{args.from_file} 是 {int(age)} 分钟前抓的（超过 {args.max_age} 分钟）——"
+                               "先重跑抓取那一步再比对；确实要用旧数据就 --max-age 0", not args.echo, EXIT_FAILED)
     elif not sys.stdin.isatty():
         text = sys.stdin.read()
     else:
@@ -332,7 +361,18 @@ def _selftest(echo):
     checks.append(("退出码·同一份再跑是0", code, EXIT_NO_CHANGE))
     checks.append(("无变化时 report 被删掉", os.path.exists(REPORT), False))
     status = open(STATUS, encoding="utf-8").read()
-    checks.append(("status 说清是缓存已含、不是没抓到", "抓到1 缓存已含1 窗口外0 新增0 更新0" in status, True))
+    checks.append(("status 说清是缓存已含、不是没抓到", "抓到1 没变化1 窗口外0 新增0 更新0" in status, True))
+    open(ERROR, "w", encoding="utf-8").write("上一轮留下的失败\n")
+    run(sample_new, quiet=True)
+    checks.append(("成功的一轮会把遗留 error 清掉", os.path.exists(ERROR), False))
+    stale_path = os.path.join(DATA, "stale_grab.txt")
+    with open(stale_path, "w", encoding="utf-8") as handle:
+        handle.write(sample_new + "\n")
+    old = time.time() - 7200
+    os.utime(stale_path, (old, old))
+    checks.append(("陈旧抓取文件认得出来（2 小时前）", grab_age_minutes(stale_path) > 60, True))
+    checks.append(("main 会拦住陈旧文件（退出码3）", main(["--from-file", stale_path]), EXIT_FAILED))
+    checks.append(("--max-age 0 时放行旧数据", main(["--from-file", stale_path, "--max-age", "0"]), EXIT_NO_CHANGE))
     checks.append(("status 里不带条目名（不往对话塞数据）", "新来的" in status, False))
 
     failed = [f"{label} → 实际 {actual!r} 期望 {want!r}"

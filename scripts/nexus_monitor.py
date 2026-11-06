@@ -2,9 +2,8 @@
 # -*- coding: utf-8 -*-
 """潜行者2 MOD 监控（NexusMods）——静默比对抓取结果与缓存，只落盘不回显
 
-抓取必须由浏览器完成：NexusMods 直连被 Cloudflare 挡（2026-10-22 本机实测，无头 Chrome
-`--dump-dom` 排序页只拿到 28.9KB 挑战页、0 条）。本脚本**不联网**：读抓取文本 → 与缓存比
-→ 有变化才写 report，靠退出码带状态，不把列表打到 stdout（数据不该回流到对话里）。
+本脚本**不联网**：读抓取文本 → 与缓存比 → 有变化才写 report，靠退出码带状态，
+不把列表打到 stdout（数据不该回流到对话里）。
 
 输入每行：`{数字ID} :: {标题} :: {绝对时间}`
   绝对时间取页面 `<time datetime>` / `<relative-time datetime>`；只拿到「2 hours ago」「7小时前」
@@ -50,7 +49,7 @@ def parse_abs(raw):
     if isinstance(raw, bool):
         return None
     if isinstance(raw, (int, float)):
-        # 历史缓存里 date 存的是 epoch 秒浮点（实测 nexus_cache.json 有 50 条），0.0 是占位不当时间看
+        # 历史缓存里 date 可能是 epoch 秒浮点，0.0 是占位不当时间看
         return datetime.fromtimestamp(raw, timezone.utc) if raw > 10 ** 8 else None
     text = str(raw or "").strip()
     if not text or text in ("?", "-") or RELATIVE.match(text):
@@ -142,7 +141,7 @@ def collect(items, cache, hours):
         elif moment is not None and old_moment is not None and moment > old_moment:
             tag = "更"
         elif moment is not None and old_moment is None:
-            # 缓存里那个时间认不出来（旧版存的相对串）：证明不了「晚于」就不报，只把绝对时间补进缓存
+            # 缓存里那个时间认不出来（存的是相对串）：证明不了「晚于」就不报，只把绝对时间补进缓存
             notes["backfill"].append((item["id"], item["raw_time"]))
             notes["already"] += 1
             continue
@@ -333,7 +332,7 @@ def _selftest(echo):
     rows, notes, _ = collect(parse("1 :: 甲 :: 2026-10-01T00:00"), seen, 1)
     checks.append(("窗口·早于窗口的不报", len(rows), 0))
 
-    # 真缓存里的历史形状：date 是 epoch 浮点、0.0 是占位（实测 nexus_cache.json 有 50 条这种）
+    # 历史缓存的形状：date 是 epoch 浮点、0.0 是占位
     now_text = datetime.now(LOCAL_TZ).strftime("%Y-%m-%dT%H:%M")
     checks.append(("历史缓存·epoch浮点认得出", parse_abs(1788222600.0) is not None, True))
     checks.append(("历史缓存·0.0 当没有时间", parse_abs(0.0), None))

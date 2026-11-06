@@ -2,16 +2,13 @@
 # -*- coding: utf-8 -*-
 r"""潜行者2（NexusMods）列表页的自动抓取——脚本自己起**真浏览器**，用 CDP 取数据，不用人开页面
 
-为什么要真浏览器：NexusMods 前面是 Cloudflare，2026-10-22 实测无头 Chrome 只拿到挑战页、直连同样被挡，
-而真浏览器抓得动。这里用独立 user-data-dir 起一个正常的（非无头）msedge/chrome 窗口，连它的 DevTools
-调试口，导航后边滚边轮询 `Runtime.evaluate` 跑抽取 JS（列表是滚动加载的），抓到就写盘、把自己起的
-浏览器进程关掉。数据只在脚本与文件之间走，不进对话（和接收器解决的是同一个问题）。
+用独立 user-data-dir 起一个正常的（非无头）msedge/chrome 窗口，连它的 DevTools 调试口，
+导航后边滚边轮询 `Runtime.evaluate` 跑抽取 JS（列表是滚动加载的），抓到就写盘、把自己起的
+浏览器进程关掉。数据只在脚本与文件之间走，不进对话。
 
-Nexus 的两个毛病（2026-10-30 本机实测，所以两条地址都试、每条重载一次）：
-① `/games/<game>/mods?sort=updatedAt` 十次有六七次只回页面壳子、列表根本不渲染（不是 CF：页内没有
-   challenges iframe、标题正常，56 秒等不到一条链接）；② 不带 `games/` 的那条会 302 到
-   `/games/<game>/mods` 并**把 `?sort=updatedAt` 丢掉**。每条卡片自带绝对时间，所以排序被丢掉只影响
-   覆盖面，不影响判新增/更新。
+两条列表地址都要试、每条重载一次：`/games/<game>/mods?sort=updatedAt` 有时只回页面壳子、
+列表不渲染；不带 `games/` 的那条会 302 到 `/games/<game>/mods` 并**把 `?sort=updatedAt` 丢掉**。
+每条卡片自带绝对时间，排序被丢掉只影响覆盖面，不影响判新增/更新。
 
 退出码：0 抓到并写盘 / 2 两条地址都试过仍一条没抽到（多半是改版）/ 3 Cloudflare 挑战页没过去
         / 4 浏览器起不来或 CDP 连不上 / 5 抓到但写盘失败
@@ -111,7 +108,7 @@ def find_browser():
 
 
 def run_profile(base_profile):
-    """一次性 profile：固定 profile 被上一轮没退干净的进程占着时用它兜底。
+    """一次性 profile：固定 profile 被进程占用时用它兜底。
     超过一天的旧目录顺手清掉，最多留 5 个"""
     try:
         keep = []
@@ -256,8 +253,7 @@ class Cdp:
 
 
 def open_browser(browser, base_profile, start_url, patience):
-    """先用**固定 profile**（登录态/cookie 会影响 Nexus 列不列列表）；它被上一轮没退干净的进程
-    占着时调试口永远不起来，这时退到一次性 profile 再试一次"""
+    """先用**固定 profile**（登录态/cookie 会影响列表渲染）；被进程占用时退到一次性 profile 再试一次"""
     for profile in (base_profile, run_profile(base_profile)):
         port = free_port()
         process = launch(browser, port, profile, start_url)

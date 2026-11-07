@@ -70,4 +70,4 @@ py -3 D:\Alife\Storage\Skills\stalker2-mod-monitor\scripts\nexus_monitor.py --fr
 - `[覆盖告警]` = 抓到的最旧一条还在窗口里：`--pages 3` 多滚几轮，或把 `--hours` 调小。
 - 判更新只认绝对时间**严格晚于**缓存里那条（`mods[id].updated` 存页面原始绝对串）。旧缓存只有相对串的，第一次走 `[回填]` 而不是误报整页更新。
 - `SkillData\browser-nexus\` 是脚本自己的浏览器 profile（与日常用的浏览器分开）；profile 被占用时脚本会换一次性 profile 再试一次。超过一天的旧副本自动清，最多留 5 个。
-- 检查间隔建议 ≥2 小时；只记录信息，不下载 MOD。
+- 检查间隔建议 ≥24 小时；只记录信息，不下载 MOD。
